@@ -116,7 +116,6 @@ function initPerson(container, personId, isSupp = false) {
             const options = sclSection.querySelector('.product-options');
             options.classList.toggle('hidden', !isChecked);
             if (isChecked) {
-                // Mặc định
                 if (!programSelect.value) programSelect.value = 'nang_cao';
                 if (!scopeSelect.value) scopeSelect.value = 'main_vn';
                 updateHealthSclStbhInfo(sclSection);
@@ -544,6 +543,8 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
             if (sectionId === 'health-scl') {
                 const programSelect = section.querySelector('.health-scl-program');
                 const scopeSelect = section.querySelector('.health-scl-scope');
+                const outpatient = section.querySelector('.health-scl-outpatient');
+                const dental = section.querySelector('.health-scl-dental');
 
                 if (mainProduct === 'TRON_TAM_AN') {
                     checkbox.checked = true;
@@ -551,7 +552,8 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                     options.classList.remove('hidden');
                     programSelect.disabled = false;
                     scopeSelect.disabled = false;
-                    // TTA: cho tất cả chương trình, mặc định "Nâng cao"
+
+                    // Cho tất cả chương trình; mặc định Nâng cao
                     Array.from(programSelect.options).forEach(opt => { if (opt.value) opt.disabled = false; });
                     if (!programSelect.value || programSelect.options[programSelect.selectedIndex]?.disabled) {
                         if (!programSelect.querySelector('option[value="nang_cao"]').disabled) {
@@ -559,6 +561,10 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                         }
                     }
                     if (!scopeSelect.value) scopeSelect.value = 'main_vn';
+                    // FIX 2: cho phép tick Ngoại trú/Nha khoa khi TTA
+                    outpatient.disabled = false;
+                    dental.disabled = false;
+
                     updateHealthSclStbhInfo(section);
                 } else {
                     // Giới hạn theo phí chính
@@ -576,7 +582,7 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                             opt.disabled = true;
                         }
                     });
-                    // Mặc định "Nâng cao" nếu hợp lệ, nếu không thì lấy option đầu tiên còn enabled
+                    // Mặc định "Nâng cao" nếu hợp lệ, nếu không chọn option enabled đầu tiên
                     if (!programSelect.value || programSelect.options[programSelect.selectedIndex]?.disabled) {
                         const nangCao = programSelect.querySelector('option[value="nang_cao"]');
                         if (nangCao && !nangCao.disabled) {
@@ -587,6 +593,12 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                         }
                     }
                     if (!scopeSelect.value) scopeSelect.value = 'main_vn';
+
+                    // Enable/disable tùy chọn theo việc đã chọn chương trình
+                    const hasProgram = programSelect.value !== '';
+                    outpatient.disabled = !hasProgram;
+                    dental.disabled = !hasProgram;
+
                     updateHealthSclStbhInfo(section);
                 }
             }
@@ -595,11 +607,6 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
             checkbox.checked = false;
             checkbox.disabled = true;
             options.classList.add('hidden');
-        }
-
-        // Khi ẩn/hiện xong, nếu là SCL và đang checked thì đảm bảo tính phí
-        if (sectionId === 'health-scl' && finalCondition && checkbox.checked) {
-            // nothing more here (đã update STBH info ở trên)
         }
     };
 
@@ -706,6 +713,7 @@ function renderMainProductOptions(customer) {
     }
 }
 
+// FIX 1: Hiển thị phí chính ngay cả khi chưa nhập payment-term (không chặn vì thiếu/nhỏ hơn tối thiểu)
 function calculateMainPremium(customer, ageOverride = null) {
     const ageToUse = ageOverride ?? customer.age;
     const { gender, mainProduct } = customer;
@@ -724,12 +732,7 @@ function calculateMainPremium(customer, ageOverride = null) {
         const genderKey = gender === 'Nữ' ? 'nu' : 'nam';
 
         if (mainProduct.startsWith('PUL')) {
-            const paymentTermInput = document.getElementById('payment-term');
-            const paymentTerm = paymentTermInput ? parseInt(paymentTermInput.value, 10) || 0 : 0;
-
-            if (mainProduct === 'PUL_5_NAM' && paymentTerm < 5) throw new Error('Thời hạn đóng phí cho PUL 5 Năm phải lớn hơn hoặc bằng 5 năm.');
-            if (mainProduct === 'PUL_15_NAM' && paymentTerm < 15) throw new Error('Thời hạn đóng phí cho PUL 15 Năm phải lớn hơn hoặc bằng 15 năm.');
-
+            // Không chặn tính phí nếu payment-term thiếu/nhỏ hơn tối thiểu; chỉ hiển thị lỗi field ở validateSection2FieldsPreCalc
             const pulRate = product_data.pul_rates[mainProduct]?.find(r => r.age === customer.age)?.[genderKey] || 0;
             if (pulRate === 0 && !ageOverride) throw new Error(`Không có biểu phí PUL cho tuổi ${customer.age}.`);
             rate = pulRate;
