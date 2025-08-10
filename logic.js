@@ -193,7 +193,7 @@ function initSummaryModal() {
         }
     }
 
-    // Thêm sự kiện để cập nhật target-age-input và bảng minh họa
+    // Lắng nghe thay đổi ở Section 1/2 để cập nhật bảng
     const abuvTermSelect = document.getElementById('abuv-term');
     document.getElementById('main-product').addEventListener('change', () => {
         updateTargetAge();
@@ -204,7 +204,7 @@ function initSummaryModal() {
         }
     });
 
-    // Sửa: không phụ thuộc id dob-main, thay bằng dob-input trong main-person-container
+    // Sửa: dùng dob-input trong main-person-container
     const mainDobInput = document.querySelector('#main-person-container .dob-input');
     if (mainDobInput) {
         mainDobInput.addEventListener('input', () => {
@@ -272,6 +272,7 @@ function initDateFormatter(input) {
     });
 }
 
+// Autocomplete nghề: dùng mousedown để chọn trước blur
 function initOccupationAutocomplete(input, container) {
     if (!input) return;
     const autocompleteContainer = container.querySelector('.occupation-autocomplete');
@@ -296,9 +297,8 @@ function initOccupationAutocomplete(input, container) {
             const item = document.createElement('div');
             item.className = 'autocomplete-item';
             item.textContent = occ.name;
-            // Dùng mousedown để chọn trước khi input bị blur
             item.addEventListener('mousedown', (ev) => {
-                ev.preventDefault(); // ngăn focus rời khỏi input
+                ev.preventDefault();
                 applyOccupation(occ);
             });
             autocompleteContainer.appendChild(item);
@@ -317,7 +317,6 @@ function initOccupationAutocomplete(input, container) {
         renderList(filtered);
     });
 
-    // Delay validate một nhịp để ưu tiên thao tác click chọn item
     input.addEventListener('blur', () => {
         setTimeout(() => {
             const typed = (input.value || '').trim().toLowerCase();
@@ -340,6 +339,7 @@ function initOccupationAutocomplete(input, container) {
         }
     });
 }
+
 function getCustomerInfo(container, isMain = false) {
     const dobInput = container.querySelector('.dob-input');
     const genderSelect = container.querySelector('.gender-select');
@@ -391,16 +391,30 @@ function getCustomerInfo(container, isMain = false) {
 function calculateAll() {
     try {
         clearError();
-        // Hiển thị lỗi trường nếu có, không dừng luồng tính phí
+        // Hiển thị lỗi trường nếu có (Section 1)
         validateMainPersonInputs();
 
         const mainPersonContainer = document.getElementById('main-person-container');
         const mainPersonInfo = getCustomerInfo(mainPersonContainer, true);
 
         updateMainProductVisibility(mainPersonInfo);
-        const mainPremium = calculateMainPremium(mainPersonInfo);
 
-        updateSupplementaryProductVisibility(mainPersonInfo, mainPremium, document.querySelector('#main-supp-container .supplementary-products-container'));
+        // Validate trước khi tính (Section 2 tiền điều kiện)
+        validateSection2FieldsPreCalc(mainPersonInfo);
+
+        // Tính phí sản phẩm chính (phí cơ bản, chưa gồm phí đóng thêm)
+        const baseMainPremium = calculateMainPremium(mainPersonInfo);
+
+        // Kiểm tra phí đóng thêm theo 5x phí chính
+        validateExtraPremiumLimit(baseMainPremium);
+        const extraPremium = getExtraPremiumValue();
+        const mainPremiumDisplay = baseMainPremium + extraPremium;
+
+        // Cập nhật hiển thị phí ngay dưới form sản phẩm chính
+        updateMainProductFeeDisplay(baseMainPremium, extraPremium);
+
+        // Hiển thị sản phẩm bổ sung theo phí SP chính (không tính phí đóng thêm)
+        updateSupplementaryProductVisibility(mainPersonInfo, baseMainPremium, document.querySelector('#main-supp-container .supplementary-products-container'));
 
         let totalSupplementaryPremium = 0;
         let totalHospitalSupportStbh = 0; // Theo dõi tổng STBH viện phí
@@ -412,12 +426,12 @@ function calculateAll() {
 
             if (!suppProductsContainer) return;
 
-            updateSupplementaryProductVisibility(personInfo, mainPremium, suppProductsContainer);
+            updateSupplementaryProductVisibility(personInfo, baseMainPremium, suppProductsContainer);
 
             totalSupplementaryPremium += calculateHealthSclPremium(personInfo, suppProductsContainer);
             totalSupplementaryPremium += calculateBhnPremium(personInfo, suppProductsContainer);
             totalSupplementaryPremium += calculateAccidentPremium(personInfo, suppProductsContainer);
-            totalSupplementaryPremium += calculateHospitalSupportPremium(personInfo, mainPremium, suppProductsContainer, totalHospitalSupportStbh);
+            totalSupplementaryPremium += calculateHospitalSupportPremium(personInfo, baseMainPremium, suppProductsContainer, totalHospitalSupportStbh);
             // Cập nhật tổng STBH viện phí
             const hospitalSupportStbh = parseFormattedNumber(suppProductsContainer.querySelector('.hospital-support-stbh')?.value || '0');
             if (suppProductsContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
@@ -425,8 +439,8 @@ function calculateAll() {
             }
         });
 
-        const totalPremium = mainPremium + totalSupplementaryPremium;
-        updateSummaryUI({ mainPremium, totalSupplementaryPremium, totalPremium });
+        const totalPremium = mainPremiumDisplay + totalSupplementaryPremium;
+        updateSummaryUI({ mainPremium: mainPremiumDisplay, totalSupplementaryPremium, totalPremium });
 
     } catch (error) {
         showError(error.message);
@@ -458,7 +472,7 @@ function updateMainProductVisibility(customer) {
             isEligible = withinAgeByGender && (riskGroup !== 4);
         }
 
-        // An Bình Ưu Việt: Nam >=12, Nữ >=28; tối đa 65 (giới hạn theo kỳ hạn xử lý khi render dropdown)
+        // An Bình Ưu Việt: Nam >=12, Nữ >=28; tối đa 65
         if (productKey === 'AN_BINH_UU_VIET') {
             const minOk = (gender === 'Nam') ? age >= 12 : age >= 28;
             isEligible = minOk && (age <= 65);
@@ -579,6 +593,7 @@ function renderMainProductOptions(customer) {
     let currentStbh = container.querySelector('#main-stbh')?.value || '';
     let currentPremium = container.querySelector('#main-premium-input')?.value || '';
     let currentPaymentTerm = container.querySelector('#payment-term')?.value || '';
+    let currentExtra = container.querySelector('#extra-premium-input')?.value || '';
 
     container.innerHTML = '';
     if (!mainProduct) return;
@@ -586,24 +601,73 @@ function renderMainProductOptions(customer) {
     let optionsHtml = '';
 
     if (mainProduct === 'TRON_TAM_AN') {
-        optionsHtml = `<div><label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label><input type="text" id="main-stbh" class="form-input bg-gray-100" value="100.000.000" disabled></div><div><p class="text-sm text-gray-600 mt-1">Thời hạn đóng phí: 10 năm. Thời gian bảo vệ: 10 năm.</p><p class="text-sm text-gray-600 mt-1 font-semibold">Bắt buộc tham gia kèm Sức Khỏe Bùng Gia Lực.</p></div>`;
+        optionsHtml = `
+            <div>
+                <label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label>
+                <input type="text" id="main-stbh" class="form-input bg-gray-100" value="100.000.000" disabled>
+            </div>
+            <div>
+                <p class="text-sm text-gray-600 mt-1">Thời hạn đóng phí: 10 năm (bằng thời hạn hợp đồng). Thời gian bảo vệ: 10 năm.</p>
+            </div>`;
     } else if (mainProduct === 'AN_BINH_UU_VIET') {
-        optionsHtml = `<div><label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label><input type="text" id="main-stbh" class="form-input" value="${currentStbh}" placeholder="VD: 1.000.000.000"></div>`;
+        optionsHtml = `
+            <div>
+                <label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label>
+                <input type="text" id="main-stbh" class="form-input" value="${currentStbh}" placeholder="VD: 1.000.000.000">
+            </div>`;
         let termOptions = '';
         if (age <= 55) termOptions += '<option value="15">15 năm</option>';
         if (age <= 60) termOptions += '<option value="10">10 năm</option>';
         if (age <= 65) termOptions += '<option value="5">5 năm</option>';
         if (!termOptions) termOptions = '<option value="" disabled>Không có kỳ hạn phù hợp (tuổi vượt quá 65)</option>';
-        optionsHtml += `<div><label for="abuv-term" class="font-medium text-gray-700 block mb-1">Thời hạn đóng phí</label><select id="abuv-term" class="form-select">${termOptions}</select><p class="text-sm text-gray-500 mt-1">Thời gian bảo vệ bằng thời hạn đóng phí.</p></div>`;
+        optionsHtml += `
+            <div>
+                <label for="abuv-term" class="font-medium text-gray-700 block mb-1">Thời hạn đóng phí</label>
+                <select id="abuv-term" class="form-select">${termOptions}</select>
+                <p class="text-sm text-gray-500 mt-1">Thời hạn đóng phí bằng thời hạn hợp đồng.</p>
+            </div>`;
     } else if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI', 'PUL_TRON_DOI', 'PUL_15_NAM', 'PUL_5_NAM'].includes(mainProduct)) {
-        optionsHtml = `<div><label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label><input type="text" id="main-stbh" class="form-input" value="${currentStbh}" placeholder="VD: 1.000.000.000"></div>`;
+        // STBH
+        optionsHtml = `
+            <div>
+                <label for="main-stbh" class="font-medium text-gray-700 block mb-1">Số tiền bảo hiểm (STBH)</label>
+                <input type="text" id="main-stbh" class="form-input" value="${currentStbh}" placeholder="VD: 1.000.000.000">
+            </div>`;
+
+        // Phí sản phẩm chính (chỉ cho MUL)
         if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI'].includes(mainProduct)) {
-            optionsHtml += `<div><label for="main-premium-input" class="font-medium text-gray-700 block mb-1">Phí sản phẩm chính</label><input type="text" id="main-premium-input" class="form-input" value="${currentPremium}" placeholder="Nhập phí"><div id="mul-fee-range" class="text-sm text-gray-500 mt-1"></div></div>`;
+            optionsHtml += `
+                <div>
+                    <label for="main-premium-input" class="font-medium text-gray-700 block mb-1">Phí sản phẩm chính</label>
+                    <input type="text" id="main-premium-input" class="form-input" value="${currentPremium}" placeholder="Nhập phí">
+                    <div id="mul-fee-range" class="text-sm text-gray-500 mt-1"></div>
+                </div>`;
         }
-        optionsHtml += `<div><label for="payment-term" class="font-medium text-gray-700 block mb-1">Thời gian đóng phí (năm)</label><input type="number" id="payment-term" class="form-input" value="${currentPaymentTerm}" placeholder="VD: 20" min="${mainProduct === 'PUL_5_NAM' ? 5 : mainProduct === 'PUL_15_NAM' ? 15 : 1}"></div>`;
+
+        // Thời gian đóng phí (Min 4, Max theo tuổi)
+        const { min, max } = getPaymentTermBounds(age);
+        optionsHtml += `
+            <div>
+                <label for="payment-term" class="font-medium text-gray-700 block mb-1">Thời gian đóng phí (năm)</label>
+                <input type="number" id="payment-term" class="form-input" value="${currentPaymentTerm}" placeholder="VD: 20" min="${min}" max="${max}">
+                <div id="payment-term-hint" class="text-sm text-gray-500 mt-1"></div>
+            </div>`;
+
+        // Phí đóng thêm (chỉ PUL/MUL, không ABUV/TTA)
+        optionsHtml += `
+            <div>
+                <label for="extra-premium-input" class="font-medium text-gray-700 block mb-1">Phí đóng thêm</label>
+                <input type="text" id="extra-premium-input" class="form-input" value="${currentExtra || ''}" placeholder="VD: 10.000.000">
+                <div class="text-sm text-gray-500 mt-1">Tối đa 5 lần phí chính.</div>
+            </div>`;
     }
 
     container.innerHTML = optionsHtml;
+
+    // Cập nhật gợi ý payment term
+    if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI', 'PUL_TRON_DOI', 'PUL_15_NAM', 'PUL_5_NAM'].includes(mainProduct)) {
+        setPaymentTermHint(mainProduct, age);
+    }
 }
 
 function calculateMainPremium(customer, ageOverride = null) {
@@ -627,12 +691,29 @@ function calculateMainPremium(customer, ageOverride = null) {
         if (mainProduct.startsWith('PUL')) {
             const paymentTermInput = document.getElementById('payment-term');
             const paymentTerm = paymentTermInput ? parseInt(paymentTermInput.value, 10) || 0 : 0;
+
+            // Giới hạn tối thiểu đặc thù PUL 5/15 năm
             if (mainProduct === 'PUL_5_NAM' && paymentTerm < 5) throw new Error('Thời hạn đóng phí cho PUL 5 Năm phải lớn hơn hoặc bằng 5 năm.');
             if (mainProduct === 'PUL_15_NAM' && paymentTerm < 15) throw new Error('Thời hạn đóng phí cho PUL 15 Năm phải lớn hơn hoặc bằng 15 năm.');
 
             const pulRate = product_data.pul_rates[mainProduct]?.find(r => r.age === customer.age)?.[genderKey] || 0;
             if (pulRate === 0 && !ageOverride) throw new Error(`Không có biểu phí PUL cho tuổi ${customer.age}.`);
             rate = pulRate;
+
+            premium = (stbh / 1000) * rate;
+
+            // Kiểm tra STBH >= 100 triệu
+            if (!ageOverride && stbh > 0 && stbh < 100000000) {
+                setFieldError(stbhEl, 'STBH nhỏ hơn 100 triệu');
+                throw new Error('STBH nhỏ hơn 100 triệu');
+            } else {
+                clearFieldError(stbhEl);
+            }
+
+            if (!ageOverride && premium > 0 && premium < 5000000) {
+                setFieldError(stbhEl, 'Phí chính nhỏ hơn 5 triệu');
+                throw new Error('Phí chính nhỏ hơn 5 triệu');
+            }
         } else if (mainProduct === 'AN_BINH_UU_VIET') {
             const term = document.getElementById('abuv-term')?.value;
             if (!term) return 0;
@@ -642,6 +723,22 @@ function calculateMainPremium(customer, ageOverride = null) {
                 throw new Error(`Không có biểu phí An Bình Ưu Việt cho tuổi ${customer.age}, kỳ hạn ${term} năm.`);
             }
             rate = abuvRate;
+            premium = (stbh / 1000) * rate;
+
+            // STBH và phí tối thiểu
+            if (!ageOverride) {
+                const stbhEl2 = document.getElementById('main-stbh');
+                if (stbh > 0 && stbh < 100000000) {
+                    setFieldError(stbhEl2, 'STBH nhỏ hơn 100 triệu');
+                    throw new Error('STBH nhỏ hơn 100 triệu');
+                } else {
+                    clearFieldError(stbhEl2);
+                }
+                if (premium > 0 && premium < 5000000) {
+                    setFieldError(stbhEl2, 'Phí chính nhỏ hơn 5 triệu');
+                    throw new Error('Phí chính nhỏ hơn 5 triệu');
+                }
+            }
         } else if (mainProduct === 'TRON_TAM_AN') {
             stbh = 100000000;
             const term = '10';
@@ -651,38 +748,52 @@ function calculateMainPremium(customer, ageOverride = null) {
                 throw new Error(`Không có biểu phí Trọn Tâm An cho tuổi ${customer.age}.`);
             }
             rate = ttaRate;
+            premium = (stbh / 1000) * rate;
         }
-        premium = (stbh / 1000) * rate;
     } else if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI'].includes(mainProduct)) {
+        const stbh = parseFormattedNumber(document.getElementById('main-stbh')?.value || '0');
         const paymentTermInput = document.getElementById('payment-term');
         const paymentTerm = paymentTermInput ? parseInt(paymentTermInput.value, 10) || 0 : 0;
-        if (mainProduct === 'PUL_5_NAM' && paymentTerm < 5) throw new Error('Thời hạn đóng phí cho PUL 5 Năm phải lớn hơn hoặc bằng 5 năm.');
-        if (mainProduct === 'PUL_15_NAM' && paymentTerm < 15) throw new Error('Thời hạn đóng phí cho PUL 15 Năm phải lớn hơn hoặc bằng 15 năm.');
 
-        if (ageOverride) {
-            premium = parseFormattedNumber(document.getElementById('main-premium-input')?.value || '0');
+        // Kiểm tra STBH >= 100 triệu cho MUL
+        if (!ageOverride && stbh > 0 && stbh < 100000000) {
+            setFieldError(document.getElementById('main-stbh'), 'STBH nhỏ hơn 100 triệu');
+            throw new Error('STBH nhỏ hơn 100 triệu');
         } else {
-            const stbh = parseFormattedNumber(document.getElementById('main-stbh')?.value || '0');
-            const factorRow = product_data.mul_factors.find(f => ageToUse >= f.ageMin && ageToUse <= f.ageMax);
-            if (!factorRow) throw new Error(`Không có hệ số MUL cho tuổi ${ageToUse}.`);
-
-            const minFee = stbh / factorRow.maxFactor;
-            const maxFee = stbh / factorRow.minFactor;
-            document.getElementById('mul-fee-range').textContent = `Phí hợp lệ từ ${formatCurrency(minFee, '')} đến ${formatCurrency(maxFee, '')}.`;
-
-            const enteredPremium = parseFormattedNumber(document.getElementById('main-premium-input')?.value || '0');
-            if (stbh > 0 && enteredPremium > 0 && (enteredPremium < minFee || enteredPremium > maxFee)) throw new Error('Phí SP chính nhập vào không hợp lệ.');
-            if (stbh > 0 && enteredPremium > 0 && enteredPremium < 5000000) throw new Error('Phí SP chính tối thiểu là 5,000,000 VNĐ.');
-            premium = enteredPremium;
+            clearFieldError(document.getElementById('main-stbh'));
         }
+
+        const factorRow = product_data.mul_factors.find(f => ageToUse >= f.ageMin && ageToUse <= f.ageMax);
+        if (!factorRow) throw new Error(`Không có hệ số MUL cho tuổi ${ageToUse}.`);
+
+        const minFee = stbh / factorRow.maxFactor;
+        const maxFee = stbh / factorRow.minFactor;
+        const rangeEl = document.getElementById('mul-fee-range');
+        if (!ageOverride && rangeEl) {
+            rangeEl.textContent = `Phí hợp lệ từ ${formatCurrency(minFee, '')} đến ${formatCurrency(maxFee, '')}.`;
+        }
+
+        const enteredPremium = parseFormattedNumber(document.getElementById('main-premium-input')?.value || '0');
+
+        if (!ageOverride) {
+            const feeInput = document.getElementById('main-premium-input');
+            let feeInvalid = false;
+            if (stbh > 0 && enteredPremium > 0) {
+                if (enteredPremium < minFee || enteredPremium > maxFee) feeInvalid = true;
+                if (enteredPremium < 5000000) feeInvalid = true;
+            }
+            if (feeInvalid) {
+                setFieldError(feeInput, 'Phí không hợp lệ');
+                throw new Error('Phí không hợp lệ');
+            } else {
+                clearFieldError(feeInput);
+            }
+        }
+
+        premium = enteredPremium;
     }
 
-    if (!ageOverride) {
-        if (premium > 0 && premium < 5000000 && mainProduct !== 'AN_BINH_UU_VIET' && mainProduct !== 'TRON_TAM_AN') {
-            throw new Error('Phí SP chính tối thiểu là 5,000,000 VNĐ.');
-        }
-        document.getElementById('main-product-fee-display').textContent = premium > 0 ? `Phí năm đầu: ${formatCurrency(premium)}` : '';
-    }
+    // Không set hiển thị phí ở đây nữa (để hiển thị kèm phí đóng thêm trong calculateAll)
     return premium;
 }
 
@@ -768,7 +879,7 @@ function calculateHospitalSupportPremium(customer, mainPremium, container, total
     const ageToUse = ageOverride ?? customer.age;
     if (ageToUse > MAX_RENEWAL_AGE.hospital_support) return 0;
 
-    // Hạn mức chung dựa trên phí sản phẩm chính
+    // Hạn mức chung dựa trên phí sản phẩm chính (không tính phí đóng thêm)
     const totalMaxSupport = Math.floor(mainPremium / 4000000) * 100000;
     // Hạn mức theo tuổi
     const maxSupportByAge = ageToUse >= 18 ? 1_000_000 : 300_000;
@@ -799,6 +910,7 @@ function calculateHospitalSupportPremium(customer, mainPremium, container, total
 }
 
 function updateSummaryUI(premiums) {
+    // Phí SP chính (đã gồm phí đóng thêm)
     document.getElementById('main-premium-result').textContent = formatCurrency(premiums.mainPremium);
 
     const suppContainer = document.getElementById('supplementary-premiums-results');
@@ -875,14 +987,20 @@ function generateSummaryTable() {
         let totalMainAcc = 0;
         let totalSuppAccMain = 0;
         let totalSuppAccAll = 0;
-        const initialMainPremium = calculateMainPremium(mainPersonInfo);
-        const totalMaxSupport = Math.floor(initialMainPremium / 4000000) * 100000; // Hạn mức chung Hỗ trợ viện phí
+
+        // Phí cơ bản và phí đóng thêm
+        const initialBaseMainPremium = calculateMainPremium(mainPersonInfo);
+        const extraPremium = getExtraPremiumValue();
+        const initialMainPremiumWithExtra = initialBaseMainPremium + extraPremium;
+
+        // Hạn mức chung Hỗ trợ viện phí dựa trên phí cơ bản (không gồm extra)
+        const totalMaxSupport = Math.floor(initialBaseMainPremium / 4000000) * 100000;
 
         for (let i = 0; (mainPersonInfo.age + i) <= targetAge; i++) {
             const currentAgeMain = mainPersonInfo.age + i;
             const contractYear = i + 1;
 
-            const mainPremiumForYear = (contractYear <= paymentTerm) ? initialMainPremium : 0;
+            const mainPremiumForYear = (contractYear <= paymentTerm) ? initialMainPremiumWithExtra : 0;
             totalMainAcc += mainPremiumForYear;
 
             let suppPremiumMain = 0;
@@ -892,7 +1010,8 @@ function generateSummaryTable() {
                 suppPremiumMain += calculateHealthSclPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
                 suppPremiumMain += calculateBhnPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
                 suppPremiumMain += calculateAccidentPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
-                suppPremiumMain += calculateHospitalSupportPremium({ ...mainPersonInfo, age: currentAgeMain }, initialMainPremium, mainSuppContainer, totalHospitalSupportStbh, currentAgeMain);
+                // Lưu ý: totalMaxSupport tính theo phí cơ bản
+                suppPremiumMain += calculateHospitalSupportPremium({ ...mainPersonInfo, age: currentAgeMain }, initialBaseMainPremium, mainSuppContainer, totalHospitalSupportStbh, currentAgeMain);
                 const hospitalSupportStbh = parseFormattedNumber(mainSuppContainer.querySelector('.hospital-support-stbh')?.value || '0');
                 if (mainSuppContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
                     totalHospitalSupportStbh += hospitalSupportStbh;
@@ -908,7 +1027,7 @@ function generateSummaryTable() {
                     suppPremium += calculateHealthSclPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
                     suppPremium += calculateBhnPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
                     suppPremium += calculateAccidentPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
-                    suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialMainPremium, suppProductsContainer, totalHospitalSupportStbh, currentPersonAge);
+                    suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialBaseMainPremium, suppProductsContainer, totalHospitalSupportStbh, currentPersonAge);
                     const hospitalSupportStbh = parseFormattedNumber(suppProductsContainer.querySelector('.hospital-support-stbh')?.value || '0');
                     if (suppProductsContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
                         totalHospitalSupportStbh += hospitalSupportStbh;
@@ -948,7 +1067,7 @@ function generateSummaryTable() {
                         suppPremium += calculateHealthSclPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
                         suppPremium += calculateBhnPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
                         suppPremium += calculateAccidentPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
-                        suppPremium += calculateHospitalSupportPremium({ ...suppPersons[index], age: currentPersonAge }, initialMainPremium, suppContainer, totalHospitalSupportStbh, currentPersonAge);
+                        suppPremium += calculateHospitalSupportPremium({ ...suppPersons[index], age: currentPersonAge }, initialBaseMainPremium, suppContainer, totalHospitalSupportStbh, currentPersonAge);
                         const hospitalSupportStbh = parseFormattedNumber(suppContainer.querySelector('.hospital-support-stbh')?.value || '0');
                         if (suppContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
                             totalHospitalSupportStbh += hospitalSupportStbh;
@@ -964,7 +1083,7 @@ function generateSummaryTable() {
         container.innerHTML = tableHtml;
 
         // Gắn sự kiện cho nút xuất HTML
-        document.getElementById('export-html-btn').addEventListener('click', () => exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium, paymentTerm));
+        document.getElementById('export-html-btn').addEventListener('click', () => exportToHTML(mainPersonInfo, suppPersons, targetAge, initialBaseMainPremium + extraPremium, paymentTerm));
 
     } catch (e) {
         container.innerHTML = `<p class="text-red-600 font-semibold text-center">${e.message}</p>`;
@@ -977,7 +1096,11 @@ function sanitizeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium, paymentTerm) {
+function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremiumWithExtra, paymentTerm) {
+    // Tính lại phí cơ bản để giới hạn viện phí
+    const initialBaseMainPremium = calculateMainPremium(mainPersonInfo);
+    const totalMaxSupport = Math.floor(initialBaseMainPremium / 4000000) * 100000;
+
     let tableHtml = `
         <table style="width: 100%; border-collapse: collapse; font-family: Arial, sans-serif;">
             <thead style="background-color: #f3f4f6;">
@@ -996,13 +1119,12 @@ function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium
     let totalMainAcc = 0;
     let totalSuppAccMain = 0;
     let totalSuppAccAll = 0;
-    const totalMaxSupport = Math.floor(initialMainPremium / 4000000) * 100000; // Hạn mức chung Hỗ trợ viện phí
 
     for (let i = 0; (mainPersonInfo.age + i) <= targetAge; i++) {
         const currentAgeMain = mainPersonInfo.age + i;
         const contractYear = i + 1;
 
-        const mainPremiumForYear = (contractYear <= paymentTerm) ? initialMainPremium : 0;
+        const mainPremiumForYear = (contractYear <= paymentTerm) ? initialMainPremiumWithExtra : 0;
         totalMainAcc += mainPremiumForYear;
 
         let suppPremiumMain = 0;
@@ -1012,7 +1134,7 @@ function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium
             suppPremiumMain += calculateHealthSclPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
             suppPremiumMain += calculateBhnPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
             suppPremiumMain += calculateAccidentPremium({ ...mainPersonInfo, age: currentAgeMain }, mainSuppContainer, currentAgeMain);
-            suppPremiumMain += calculateHospitalSupportPremium({ ...mainPersonInfo, age: currentAgeMain }, initialMainPremium, mainSuppContainer, totalHospitalSupportStbh, currentAgeMain);
+            suppPremiumMain += calculateHospitalSupportPremium({ ...mainPersonInfo, age: currentAgeMain }, initialBaseMainPremium, mainSuppContainer, totalHospitalSupportStbh, currentAgeMain);
             const hospitalSupportStbh = parseFormattedNumber(mainSuppContainer.querySelector('.hospital-support-stbh')?.value || '0');
             if (mainSuppContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
                 totalHospitalSupportStbh += hospitalSupportStbh;
@@ -1028,7 +1150,7 @@ function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium
                 suppPremium += calculateHealthSclPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
                 suppPremium += calculateBhnPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
                 suppPremium += calculateAccidentPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
-                suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialMainPremium, suppProductsContainer, totalHospitalSupportStbh, currentPersonAge);
+                suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialBaseMainPremium, suppProductsContainer, totalHospitalSupportStbh, currentPersonAge);
                 const hospitalSupportStbh = parseFormattedNumber(suppProductsContainer.querySelector('.hospital-support-stbh')?.value || '0');
                 if (suppProductsContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
                     totalHospitalSupportStbh += hospitalSupportStbh;
@@ -1048,8 +1170,33 @@ function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium
                 <td style="padding: 8px; border: 1px solid #d1d5db; text-align: center;">${currentAgeMain}</td>
                 <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(mainPremiumForYear)}</td>
                 <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(suppPremiumMain)}</td>
-                ${suppPremiums.map(suppPremium => `<td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(suppPremium)}</td>`).join('')}
-                <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right; font-weight: 600;">${formatCurrency(mainPremiumForYear + suppPremiumMain + suppPremiums.reduce((sum, p) => sum + p, 0))}</td>
+                ${suppPersons.map((_, idx2) => '').join('')}
+        `;
+        tableHtml += `${suppPersons.map(person => {
+            const currentPersonAge = person.age + i;
+            const suppProductsContainer = person.container.querySelector('.supplementary-products-container');
+            let suppPremium = 0;
+            if (suppProductsContainer) {
+                suppPremium += calculateHealthSclPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                suppPremium += calculateBhnPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                suppPremium += calculateAccidentPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialBaseMainPremium, suppProductsContainer, 0, currentPersonAge);
+            }
+            return `<td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(suppPremium)}</td>`;
+        }).join('')}`;
+        tableHtml += `
+                <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right; font-weight: 600;">${formatCurrency(mainPremiumForYear + suppPremiumMain + suppPersons.reduce((sum, person) => {
+                    const currentPersonAge = person.age + i;
+                    const suppProductsContainer = person.container.querySelector('.supplementary-products-container');
+                    let suppPremium = 0;
+                    if (suppProductsContainer) {
+                        suppPremium += calculateHealthSclPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                        suppPremium += calculateBhnPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                        suppPremium += calculateAccidentPremium({ ...person, age: currentPersonAge }, suppProductsContainer, currentPersonAge);
+                        suppPremium += calculateHospitalSupportPremium({ ...person, age: currentPersonAge }, initialBaseMainPremium, suppProductsContainer, 0, currentPersonAge);
+                    }
+                    return sum + suppPremium;
+                }, 0))}</td>
             </tr>
         `;
     }
@@ -1059,27 +1206,7 @@ function exportToHTML(mainPersonInfo, suppPersons, targetAge, initialMainPremium
             <td style="padding: 8px; border: 1px solid #d1d5db;" colspan="2">Tổng cộng</td>
             <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(totalMainAcc)}</td>
             <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(totalSuppAccMain)}</td>
-            ${suppPersons.map((_, index) => {
-                const totalSupp = suppPersons[index].container.querySelector('.supplementary-products-container') ? 
-                    Array.from({ length: targetAge - mainPersonInfo.age + 1 }).reduce((sum, _, i) => {
-                        const currentPersonAge = suppPersons[index].age + i;
-                        let suppPremium = 0;
-                        let totalHospitalSupportStbh = 0; // Reset tổng STBH viện phí mỗi người
-                        const suppContainer = suppPersons[index].container.querySelector('.supplementary-products-container');
-                        if (suppContainer) {
-                            suppPremium += calculateHealthSclPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
-                            suppPremium += calculateBhnPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
-                            suppPremium += calculateAccidentPremium({ ...suppPersons[index], age: currentPersonAge }, suppContainer, currentPersonAge);
-                            suppPremium += calculateHospitalSupportPremium({ ...suppPersons[index], age: currentPersonAge }, initialMainPremium, suppContainer, totalHospitalSupportStbh, currentPersonAge);
-                            const hospitalSupportStbh = parseFormattedNumber(suppContainer.querySelector('.hospital-support-stbh')?.value || '0');
-                            if (suppContainer.querySelector('.hospital-support-checkbox')?.checked && hospitalSupportStbh > 0) {
-                                totalHospitalSupportStbh += hospitalSupportStbh;
-                            }
-                        }
-                        return sum + suppPremium;
-                    }, 0) : 0;
-                return `<td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(totalSupp)}</td>`;
-            }).join('')}
+            ${suppPersons.map(() => `<td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;"></td>`).join('')}
             <td style="padding: 8px; border: 1px solid #d1d5db; text-align: right;">${formatCurrency(totalMainAcc + totalSuppAccMain + totalSuppAccAll)}</td>
         </tr>
     </tbody></table>`;
@@ -1156,7 +1283,8 @@ function clearError() {
 }
 
 // Helpers: hiển thị lỗi trường cho Section 1
-function setFieldError(input, message) {
+function setFieldError(inputOrEl, message) {
+    const input = typeof inputOrEl === 'string' ? document.querySelector(inputOrEl) : inputOrEl;
     if (!input) return;
     let err = input.parentElement.querySelector('.field-error');
     if (!err) {
@@ -1171,8 +1299,8 @@ function setFieldError(input, message) {
         input.classList.remove('border-red-500');
     }
 }
-function clearFieldError(input) {
-    setFieldError(input, '');
+function clearFieldError(inputOrEl) {
+    setFieldError(inputOrEl, '');
 }
 
 function validateMainPersonInputs() {
@@ -1230,6 +1358,105 @@ function validateMainPersonInputs() {
     }
 
     return ok;
+}
+
+// ======= Section 2 helpers =======
+
+function getPaymentTermBounds(age) {
+    const min = 4;
+    const max = Math.max(0, 100 - age - 1);
+    return { min, max };
+}
+
+function setPaymentTermHint(mainProduct, age) {
+    const hintEl = document.getElementById('payment-term-hint');
+    if (!hintEl) return;
+    const { min, max } = getPaymentTermBounds(age);
+    let hint = `Nhập từ ${min} đến ${max} năm`;
+    if (mainProduct === 'PUL_5_NAM') hint += ' (tối thiểu 5 năm)';
+    if (mainProduct === 'PUL_15_NAM') hint += ' (tối thiểu 15 năm)';
+    hintEl.textContent = hint;
+}
+
+function validateSection2FieldsPreCalc(customer) {
+    const mainProduct = customer.mainProduct;
+
+    // STBH: bắt buộc >= 100 triệu (áp dụng mọi SP trừ Trọn Tâm An)
+    if (mainProduct && mainProduct !== 'TRON_TAM_AN') {
+        const stbhEl = document.getElementById('main-stbh');
+        if (stbhEl) {
+            const stbh = parseFormattedNumber(stbhEl.value || '0');
+            if (stbh > 0 && stbh < 100000000) {
+                setFieldError(stbhEl, 'STBH nhỏ hơn 100 triệu');
+            } else {
+                clearFieldError(stbhEl);
+            }
+        }
+    }
+
+    // Payment term: chỉ cho PUL & MUL
+    if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI', 'PUL_TRON_DOI', 'PUL_15_NAM', 'PUL_5_NAM'].includes(mainProduct)) {
+        const el = document.getElementById('payment-term');
+        if (el) {
+            const { min, max } = getPaymentTermBounds(customer.age);
+            const val = parseInt(el.value, 10);
+            if (el.value && (isNaN(val) || val < min || val > max)) {
+                setFieldError(el, `Thời hạn không hợp lệ, từ ${min} đến ${max}`);
+            } else {
+                clearFieldError(el);
+            }
+        }
+    }
+
+    // MUL: gợi ý min-max & validate phí
+    if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI'].includes(mainProduct)) {
+        const stbh = parseFormattedNumber(document.getElementById('main-stbh')?.value || '0');
+        const feeInput = document.getElementById('main-premium-input');
+        const factorRow = product_data.mul_factors.find(f => customer.age >= f.ageMin && customer.age <= f.ageMax);
+        if (factorRow && stbh > 0) {
+            const minFee = stbh / factorRow.maxFactor;
+            const maxFee = stbh / factorRow.minFactor;
+            const rangeEl = document.getElementById('mul-fee-range');
+            if (rangeEl) rangeEl.textContent = `Phí hợp lệ từ ${formatCurrency(minFee, '')} đến ${formatCurrency(maxFee, '')}.`;
+
+            const entered = parseFormattedNumber(feeInput?.value || '0');
+            if (entered > 0 && (entered < minFee || entered > maxFee || entered < 5000000)) {
+                setFieldError(feeInput, 'Phí không hợp lệ');
+            } else {
+                clearFieldError(feeInput);
+            }
+        }
+    }
+}
+
+function getExtraPremiumValue() {
+    return parseFormattedNumber(document.getElementById('extra-premium-input')?.value || '0');
+}
+
+function validateExtraPremiumLimit(basePremium) {
+    const el = document.getElementById('extra-premium-input');
+    if (!el) return;
+    const extra = getExtraPremiumValue();
+    if (extra > 0 && basePremium > 0 && extra > 5 * basePremium) {
+        setFieldError(el, 'Phí đóng thêm vượt quá 5 lần phí chính');
+        throw new Error('Phí đóng thêm vượt quá 5 lần phí chính');
+    } else {
+        clearFieldError(el);
+    }
+}
+
+function updateMainProductFeeDisplay(basePremium, extraPremium) {
+    const el = document.getElementById('main-product-fee-display');
+    if (!el) return;
+    if (basePremium <= 0 && extraPremium <= 0) {
+        el.textContent = '';
+        return;
+    }
+    if (extraPremium > 0) {
+        el.innerHTML = `Phí SP chính: ${formatCurrency(basePremium)} | Phí đóng thêm: ${formatCurrency(extraPremium)} | Tổng: ${formatCurrency(basePremium + extraPremium)}`;
+    } else {
+        el.textContent = `Phí SP chính: ${formatCurrency(basePremium)}`;
+    }
 }
 
 function generateSupplementaryPersonHtml(personId, count) {
