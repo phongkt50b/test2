@@ -282,50 +282,56 @@ function initOccupationAutocomplete(input, container) {
         input.dataset.group = occ.group;
         if (riskGroupSpan) riskGroupSpan.textContent = occ.group;
         clearFieldError(input);
+        autocompleteContainer.classList.add('hidden');
         calculateAll();
     };
 
-    input.addEventListener('input', () => {
-        const value = input.value.toLowerCase();
+    const renderList = (filtered) => {
         autocompleteContainer.innerHTML = '';
+        if (filtered.length === 0) {
+            autocompleteContainer.classList.add('hidden');
+            return;
+        }
+        filtered.forEach(occ => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.textContent = occ.name;
+            // Dùng mousedown để chọn trước khi input bị blur
+            item.addEventListener('mousedown', (ev) => {
+                ev.preventDefault(); // ngăn focus rời khỏi input
+                applyOccupation(occ);
+            });
+            autocompleteContainer.appendChild(item);
+        });
+        autocompleteContainer.classList.remove('hidden');
+    };
+
+    input.addEventListener('input', () => {
+        const value = input.value.trim().toLowerCase();
         if (value.length < 2) {
             autocompleteContainer.classList.add('hidden');
             return;
         }
-
         const filtered = product_data.occupations
             .filter(o => o.group > 0 && o.name.toLowerCase().includes(value));
-
-        if (filtered.length > 0) {
-            filtered.forEach(occ => {
-                const item = document.createElement('div');
-                item.className = 'autocomplete-item';
-                item.textContent = occ.name;
-                item.addEventListener('click', () => {
-                    applyOccupation(occ);
-                    autocompleteContainer.classList.add('hidden');
-                });
-                autocompleteContainer.appendChild(item);
-            });
-            autocompleteContainer.classList.remove('hidden');
-        } else {
-            autocompleteContainer.classList.add('hidden');
-        }
+        renderList(filtered);
     });
 
-    // Bắt buộc chọn từ danh sách khi rời input
+    // Delay validate một nhịp để ưu tiên thao tác click chọn item
     input.addEventListener('blur', () => {
-        const typed = (input.value || '').trim().toLowerCase();
-        const match = product_data.occupations.find(o => o.group > 0 && o.name.toLowerCase() === typed);
-        if (typed && match) {
-            applyOccupation(match);
-        } else {
-            input.dataset.group = '';
-            if (riskGroupSpan) riskGroupSpan.textContent = '...';
-            setFieldError(input, 'Chọn nghề nghiệp từ danh sách');
-            calculateAll();
-        }
-        autocompleteContainer.classList.add('hidden');
+        setTimeout(() => {
+            const typed = (input.value || '').trim().toLowerCase();
+            const match = product_data.occupations.find(o => o.group > 0 && o.name.toLowerCase() === typed);
+            if (typed && match) {
+                applyOccupation(match);
+            } else {
+                input.dataset.group = '';
+                if (riskGroupSpan) riskGroupSpan.textContent = '...';
+                setFieldError(input, 'Chọn nghề nghiệp từ danh sách');
+                autocompleteContainer.classList.add('hidden');
+                calculateAll();
+            }
+        }, 0);
     });
 
     document.addEventListener('click', (e) => {
@@ -334,7 +340,6 @@ function initOccupationAutocomplete(input, container) {
         }
     });
 }
-
 function getCustomerInfo(container, isMain = false) {
     const dobInput = container.querySelector('.dob-input');
     const genderSelect = container.querySelector('.gender-select');
