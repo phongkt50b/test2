@@ -203,14 +203,20 @@ function initSummaryModal() {
             generateSummaryTable();
         }
     });
-    document.getElementById('dob-main').addEventListener('input', () => {
-        updateTargetAge();
-        if (document.getElementById('summary-modal').classList.contains('hidden')) {
-            calculateAll();
-        } else {
-            generateSummaryTable();
-        }
-    });
+
+    // Sửa: không phụ thuộc id dob-main, thay bằng dob-input trong main-person-container
+    const mainDobInput = document.querySelector('#main-person-container .dob-input');
+    if (mainDobInput) {
+        mainDobInput.addEventListener('input', () => {
+            updateTargetAge();
+            if (document.getElementById('summary-modal').classList.contains('hidden')) {
+                calculateAll();
+            } else {
+                generateSummaryTable();
+            }
+        });
+    }
+
     if (abuvTermSelect) {
         abuvTermSelect.addEventListener('change', () => {
             updateTargetAge();
