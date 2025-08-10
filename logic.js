@@ -1,3 +1,14 @@
+Chuẩn rồi! Mình đã cập nhật:
+- Section 4: giới hạn tối đa 10 NĐBH bổ sung, nút + Thêm sẽ tự disable khi đủ 10 hoặc khi chọn Trọn Tâm An. Xóa người sẽ tự bật lại nút nếu còn dưới 10.
+- Section 2: Thời gian đóng phí hiển thị gợi ý và validate theo min-max:
+  - PUL 5 năm: min 5, max = 100 - tuổi - 1
+  - PUL 15 năm: min 15, max = 100 - tuổi - 1
+  - Các SP khác: min 4, max như trên
+  - Lỗi hiển thị ngay dưới input, không chặn việc hiển thị phí chính.
+
+Copy toàn bộ file JS dưới đây để thay thế:
+
+```js
 import { product_data } from './data.js';
 
 let supplementaryInsuredCount = 0;
@@ -28,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSummaryModal();
 
     attachGlobalListeners();
+    updateSupplementaryAddButtonState();
     calculateAll();
 });
 
@@ -163,11 +175,33 @@ function initPerson(container, personId, isSupp = false) {
 }
 
 function initMainProductLogic() {
-    document.getElementById('main-product').addEventListener('change', calculateAll);
+    document.getElementById('main-product').addEventListener('change', () => {
+        updateSupplementaryAddButtonState();
+        calculateAll();
+    });
+}
+
+function getSupplementaryCount() {
+    return document.querySelectorAll('#supplementary-insured-container .person-container').length;
+}
+
+function updateSupplementaryAddButtonState() {
+    const btn = document.getElementById('add-supp-insured-btn');
+    if (!btn) return;
+    const mainProduct = document.getElementById('main-product')?.value || '';
+    const count = getSupplementaryCount();
+    const disabled = (mainProduct === 'TRON_TAM_AN') || (count >= 10);
+    btn.disabled = disabled;
+    btn.classList.toggle('opacity-50', disabled);
+    btn.classList.toggle('cursor-not-allowed', disabled);
 }
 
 function initSupplementaryButton() {
     document.getElementById('add-supp-insured-btn').addEventListener('click', () => {
+        if (getSupplementaryCount() >= 10) {
+            updateSupplementaryAddButtonState();
+            return;
+        }
         supplementaryInsuredCount++;
         const personId = `supp${supplementaryInsuredCount}`;
         const container = document.getElementById('supplementary-insured-container');
@@ -177,6 +211,7 @@ function initSupplementaryButton() {
         newPersonDiv.innerHTML = generateSupplementaryPersonHtml(personId, supplementaryInsuredCount);
         container.appendChild(newPersonDiv);
         initPerson(newPersonDiv, personId, true);
+        updateSupplementaryAddButtonState();
         calculateAll();
     });
 }
@@ -516,6 +551,8 @@ function updateMainProductVisibility(customer) {
         currentMainProductState.product = newProduct;
         currentMainProductState.age = age;
     }
+
+    updateSupplementaryAddButtonState();
 }
 
 function updateSupplementaryProductVisibility(customer, mainPremium, container) {
@@ -561,7 +598,7 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                         }
                     }
                     if (!scopeSelect.value) scopeSelect.value = 'main_vn';
-                    // FIX 2: cho phép tick Ngoại trú/Nha khoa khi TTA
+                    // Cho phép tick Ngoại trú/Nha khoa khi TTA
                     outpatient.disabled = false;
                     dental.disabled = false;
 
@@ -582,7 +619,6 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                             opt.disabled = true;
                         }
                     });
-                    // Mặc định "Nâng cao" nếu hợp lệ, nếu không chọn option enabled đầu tiên
                     if (!programSelect.value || programSelect.options[programSelect.selectedIndex]?.disabled) {
                         const nangCao = programSelect.querySelector('option[value="nang_cao"]');
                         if (nangCao && !nangCao.disabled) {
@@ -594,7 +630,6 @@ function updateSupplementaryProductVisibility(customer, mainPremium, container) 
                     }
                     if (!scopeSelect.value) scopeSelect.value = 'main_vn';
 
-                    // Enable/disable tùy chọn theo việc đã chọn chương trình
                     const hasProgram = programSelect.value !== '';
                     outpatient.disabled = !hasProgram;
                     dental.disabled = !hasProgram;
@@ -687,8 +722,8 @@ function renderMainProductOptions(customer) {
                 </div>`;
         }
 
-        // Thời gian đóng phí (Min 4, Max theo tuổi)
-        const { min, max } = getPaymentTermBounds(age);
+        // Thời gian đóng phí (min theo sản phẩm, max theo tuổi)
+        const { min, max } = getPaymentTermBoundsByProduct(mainProduct, age);
         optionsHtml += `
             <div>
                 <label for="payment-term" class="font-medium text-gray-700 block mb-1">Thời gian đóng phí (năm)</label>
@@ -713,7 +748,7 @@ function renderMainProductOptions(customer) {
     }
 }
 
-// FIX 1: Hiển thị phí chính ngay cả khi chưa nhập payment-term (không chặn vì thiếu/nhỏ hơn tối thiểu)
+// Hiển thị phí chính ngay cả khi chưa nhập payment-term (không chặn vì thiếu/nhỏ hơn tối thiểu)
 function calculateMainPremium(customer, ageOverride = null) {
     const ageToUse = ageOverride ?? customer.age;
     const { gender, mainProduct } = customer;
@@ -732,7 +767,6 @@ function calculateMainPremium(customer, ageOverride = null) {
         const genderKey = gender === 'Nữ' ? 'nu' : 'nam';
 
         if (mainProduct.startsWith('PUL')) {
-            // Không chặn tính phí nếu payment-term thiếu/nhỏ hơn tối thiểu; chỉ hiển thị lỗi field ở validateSection2FieldsPreCalc
             const pulRate = product_data.pul_rates[mainProduct]?.find(r => r.age === customer.age)?.[genderKey] || 0;
             if (pulRate === 0 && !ageOverride) throw new Error(`Không có biểu phí PUL cho tuổi ${customer.age}.`);
             rate = pulRate;
@@ -1372,19 +1406,29 @@ function validateMainPersonInputs() {
 
 // ======= Section 2 helpers =======
 
+function getProductMinPaymentTerm(mainProduct) {
+    if (mainProduct === 'PUL_5_NAM') return 5;
+    if (mainProduct === 'PUL_15_NAM') return 15;
+    return 4;
+}
+
 function getPaymentTermBounds(age) {
     const min = 4;
     const max = Math.max(0, 100 - age - 1);
     return { min, max };
 }
 
+function getPaymentTermBoundsByProduct(mainProduct, age) {
+    const prodMin = getProductMinPaymentTerm(mainProduct);
+    const max = Math.max(0, 100 - age - 1);
+    return { min: prodMin, max };
+}
+
 function setPaymentTermHint(mainProduct, age) {
     const hintEl = document.getElementById('payment-term-hint');
     if (!hintEl) return;
-    const { min, max } = getPaymentTermBounds(age);
+    const { min, max } = getPaymentTermBoundsByProduct(mainProduct, age);
     let hint = `Nhập từ ${min} đến ${max} năm`;
-    if (mainProduct === 'PUL_5_NAM') hint += ' (tối thiểu 5 năm)';
-    if (mainProduct === 'PUL_15_NAM') hint += ' (tối thiểu 15 năm)';
     hintEl.textContent = hint;
 }
 
@@ -1406,7 +1450,7 @@ function validateSection2FieldsPreCalc(customer) {
     if (['KHOE_BINH_AN', 'VUNG_TUONG_LAI', 'PUL_TRON_DOI', 'PUL_15_NAM', 'PUL_5_NAM'].includes(mainProduct)) {
         const el = document.getElementById('payment-term');
         if (el) {
-            const { min, max } = getPaymentTermBounds(customer.age);
+            const { min, max } = getPaymentTermBoundsByProduct(mainProduct, customer.age);
             const val = parseInt(el.value, 10);
             if (el.value && (isNaN(val) || val < min || val > max)) {
                 setFieldError(el, `Thời hạn không hợp lệ, từ ${min} đến ${max}`);
@@ -1486,7 +1530,7 @@ function updateHealthSclStbhInfo(section) {
 
 function generateSupplementaryPersonHtml(personId, count) {
     return `
-        <button class="w-full text-right text-sm text-red-600 font-semibold" onclick="this.closest('.person-container').remove(); calculateAll();">Xóa NĐBH này</button>
+        <button class="w-full text-right text-sm text-red-600 font-semibold" onclick="this.closest('.person-container').remove(); updateSupplementaryAddButtonState(); calculateAll();">Xóa NĐBH này</button>
         <h3 class="text-lg font-bold text-gray-700 mb-2 border-t pt-4">NĐBH Bổ Sung ${count}</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -1594,3 +1638,10 @@ function generateSupplementaryProductsHtml(personId) {
         </div>
     `;
 }
+```
+
+Note:
+- Nút “+ Thêm” tự disable khi đủ 10 hoặc khi chọn Trọn Tâm An; khi xóa người sẽ bật lại tự động.
+- Gợi ý và lỗi thời hạn đóng phí đã áp dụng min theo từng sản phẩm (5/15/4) và max theo tuổi.
+
+Cần mình thêm thông báo nhỏ (tooltip) khi đạt tối đa 10 người không? Mình có thể render dòng “Đã đạt tối đa 10 NĐBH bổ sung” ngay dưới nút nếu bạn muốn.
