@@ -1,14 +1,3 @@
-Chuẩn rồi! Mình đã cập nhật:
-- Section 4: giới hạn tối đa 10 NĐBH bổ sung, nút + Thêm sẽ tự disable khi đủ 10 hoặc khi chọn Trọn Tâm An. Xóa người sẽ tự bật lại nút nếu còn dưới 10.
-- Section 2: Thời gian đóng phí hiển thị gợi ý và validate theo min-max:
-  - PUL 5 năm: min 5, max = 100 - tuổi - 1
-  - PUL 15 năm: min 15, max = 100 - tuổi - 1
-  - Các SP khác: min 4, max như trên
-  - Lỗi hiển thị ngay dưới input, không chặn việc hiển thị phí chính.
-
-Copy toàn bộ file JS dưới đây để thay thế:
-
-```js
 import { product_data } from './data.js';
 
 let supplementaryInsuredCount = 0;
@@ -1638,10 +1627,3 @@ function generateSupplementaryProductsHtml(personId) {
         </div>
     `;
 }
-```
-
-Note:
-- Nút “+ Thêm” tự disable khi đủ 10 hoặc khi chọn Trọn Tâm An; khi xóa người sẽ bật lại tự động.
-- Gợi ý và lỗi thời hạn đóng phí đã áp dụng min theo từng sản phẩm (5/15/4) và max theo tuổi.
-
-Cần mình thêm thông báo nhỏ (tooltip) khi đạt tối đa 10 người không? Mình có thể render dòng “Đã đạt tối đa 10 NĐBH bổ sung” ngay dưới nút nếu bạn muốn.
